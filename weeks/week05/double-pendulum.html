@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>双摆混沌物理模拟器 · RK4</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: #1a1a24;
+    color: #cfd6e6;
+    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    touch-action: none;
+    cursor: default;
+  }
+  #hud {
+    position: fixed;
+    top: 14px;
+    left: 16px;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #8e99b8;
+    pointer-events: none;
+    user-select: none;
+    background: rgba(10, 12, 20, 0.55);
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid rgba(120, 200, 255, 0.15);
+  }
+  #hud b {
+    color: #7fd4ff;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="hud">
+  <b>双摆混沌模拟器</b><br>
+  拖动任意摆球改变初始角度，松手释放<br>
+  双击画布 · 重置
+</div>
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+const L1 = 75.6;
+const L2 = 75.6;
+const M1 = 1;
+const M2 = 1;
+const G = 980;
+const DT = 1 / 240;
+const SUB_MAX = 6;
+
+const INIT_TH1 = (120 * Math.PI) / 180;
+const INIT_TH2 = (160 * Math.PI) / 180;
+
+let W = 0;
+let H = 0;
+let th1 = INIT_TH1;
+let th2 = INIT_TH2;
+let w1 = 0;
+let w2 = 0;
+let lastTime = null;
+let dragging = null;
+let frameCount = 0;
+
+const pivot = { x: 0, y: 0 };
+const b1 = { x: 0, y: 0 };
+const b2 = { x: 0, y: 0 };
+const trail = [];
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  W = cv.clientWidth = window.innerWidth;
+  H = cv.clientHeight = window.innerHeight;
+  cv.width = W * dpr;
+  cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  pivot.x = W / 2 - 460;
+  pivot.y = H * 0.42 - 180;
+}
+
+function updatePositions() {
+  b1.x = pivot.x + L1 * Math.sin(th1);
+  b1.y = pivot.y + L1 * Math.cos(th1);
+  b2.x = b1.x + L2 * Math.sin(th2);
+  b2.y = b1.y + L2 * Math.cos(th2);
+}
+
+function derivatives(t1, t2, o1, o2) {
+  const d = t1 - t2;
+  const den = L1 * (2 * M1 + M2 - M2 * Math.cos(2 * d));
+  const a1 =
+    (-G * (2 * M1 + M2) * Math.sin(t1) -
+      M2 * G * Math.sin(t1 - 2 * t2) -
+      2 * Math.sin(d) * M2 * (o2 * o2 * L2 + o1 * o1 * L1 * Math.cos(d))) /
+    den;
+  const a2 =
+    (2 *
+      Math.sin(d) *
+      (o1 * o1 * L1 * (M1 + M2) +
+        G * (M1 + M2) * Math.cos(t1) +
+        o2 * o2 * L2 * M2 * Math.cos(d))) /
+    den;
+  return [o1, o2, a1, a2];
+}
+
+function rk4Step(dt) {
+  const k1 = derivatives(th1, th2, w1, w2);
+  const k2 = derivatives(
+    th1 + 0.5 * dt * k1[0],
+    th2 + 0.5 * dt * k1[1],
+    w1 + 0.5 * dt * k1[2],
+    w2 + 0.5 * dt * k1[3]
+  );
+  const k3 = derivatives(
+    th1 + 0.5 * dt * k2[0],
+    th2 + 0.5 * dt * k2[1],
+    w1 + 0.5 * dt * k2[2],
+    w2 + 0.5 * dt * k2[3]
+  );
+  const k4 = derivatives(
+    th1 + dt * k3[0],
+    th2 + dt * k3[1],
+    w1 + dt * k3[2],
+    w2 + dt * k3[3]
+  );
+  th1 += (dt / 6) * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]);
+  th2 += (dt / 6) * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]);
+  w1 += (dt / 6) * (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]);
+  w2 += (dt / 6) * (k1[3] + 2 * k2[3] + 2 * k3[3] + k4[3]);
+}
+
+function advance(realDt) {
+  let budget = Math.min(realDt, 1 / 30);
+  const steps = Math.max(1, Math.ceil(budget / DT));
+  for (let i = 0; i < steps; i++) {
+    rk4Step(budget / steps);
+  }
+}
+
+function angleFromAnchor(ax, ay, px, py) {
+  return Math.atan2(px - ax, py - ay);
+}
+
+function drawTrail() {
+  if (trail.length < 2) return;
+  ctx.lineCap = 'round';
+  for (let i = 1; i < trail.length; i++) {
+    const p = i / trail.length;
+    const hue = (frameCount * 6 + i * 7) % 360;
+    ctx.strokeStyle = `hsla(${hue}, 100%, 68%, ${(p * 0.6).toFixed(3)})`;
+    ctx.lineWidth = 1 + p * 2.6;
+    ctx.beginPath();
+    ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
+    ctx.lineTo(trail[i].x, trail[i].y);
+    ctx.stroke();
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+
+  drawTrail();
+
+  ctx.strokeStyle = 'rgba(150, 160, 190, 0.6)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(pivot.x, pivot.y);
+  ctx.lineTo(b1.x, b1.y);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(190, 170, 160, 0.55)';
+  ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(b1.x, b1.y);
+  ctx.lineTo(b2.x, b2.y);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(pivot.x, pivot.y, 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#8e99b8';
+  ctx.fill();
+
+  ctx.shadowColor = 'rgba(93, 143, 232, 0.9)';
+  ctx.shadowBlur = 16;
+  ctx.beginPath();
+  ctx.arc(b1.x, b1.y, 11, 0, Math.PI * 2);
+  ctx.fillStyle = '#5d8fe8';
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  const glow = ctx.createRadialGradient(b2.x, b2.y, 0, b2.x, b2.y, 24);
+  glow.addColorStop(0, 'hsla(190, 100%, 70%, 0.5)');
+  glow.addColorStop(1, 'hsla(190, 100%, 70%, 0)');
+  ctx.beginPath();
+  ctx.arc(b2.x, b2.y, 24, 0, Math.PI * 2);
+  ctx.fillStyle = glow;
+  ctx.fill();
+
+  ctx.shadowColor = 'hsla(190, 100%, 75%, 0.95)';
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  ctx.arc(b2.x, b2.y, 9, 0, Math.PI * 2);
+  ctx.fillStyle = '#9beaff';
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function frame(time) {
+  if (lastTime === null) {
+    lastTime = time;
+  }
+  let realDt = (time - lastTime) / 1000;
+  lastTime = time;
+  frameCount++;
+
+  if (dragging === null) {
+    advance(Math.min(realDt, 1 / 30));
+  }
+  updatePositions();
+
+  trail.push({ x: b2.x, y: b2.y });
+  if (trail.length > 90) {
+    trail.shift();
+  }
+
+  draw();
+  requestAnimationFrame(frame);
+}
+
+function bobDistance(px, py) {
+  updatePositions();
+  return Math.min(Math.hypot(px - b1.x, py - b1.y), Math.hypot(px - b2.x, py - b2.y));
+}
+
+function startDrag(px, py) {
+  updatePositions();
+  const d1 = Math.hypot(px - b1.x, py - b1.y);
+  const d2 = Math.hypot(px - b2.x, py - b2.y);
+  if (Math.min(d1, d2) > 48) return;
+  dragging = d1 <= d2 ? 1 : 2;
+  trail.length = 0;
+  applyDrag(px, py);
+}
+
+function applyDrag(px, py) {
+  if (dragging === 1) {
+    th1 = angleFromAnchor(pivot.x, pivot.y, px, py);
+  } else if (dragging === 2) {
+    updatePositions();
+    th2 = angleFromAnchor(b1.x, b1.y, px, py);
+  }
+}
+
+function endDrag() {
+  if (dragging !== null) {
+    dragging = null;
+    w1 = 0;
+    w2 = 0;
+  }
+}
+
+function reset() {
+  th1 = INIT_TH1;
+  th2 = INIT_TH2;
+  w1 = 0;
+  w2 = 0;
+  trail.length = 0;
+  dragging = null;
+}
+
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  cv.setPointerCapture(e.pointerId);
+  startDrag(e.clientX, e.clientY);
+});
+
+cv.addEventListener('pointermove', e => {
+  if (dragging !== null) {
+    applyDrag(e.clientX, e.clientY);
+  } else {
+    cv.style.cursor = bobDistance(e.clientX, e.clientY) < 48 ? 'grab' : 'default';
+  }
+});
+
+cv.addEventListener('pointerup', endDrag);
+cv.addEventListener('pointercancel', endDrag);
+
+cv.addEventListener('dblclick', reset);
+
+window.addEventListener('resize', resize);
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
