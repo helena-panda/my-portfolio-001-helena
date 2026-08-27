@@ -5,26 +5,117 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>单摆物理模拟器 · 简谐振动</title>
 <style>
-  body {
+  html, body {
     margin: 0;
-    overflow: hidden;
+    padding: 0;
+    height: 100%;
     background: #1a1a24;
+    color: #cfd6e6;
+    font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #stage {
+    flex: 1;
+    position: relative;
+    min-height: 0;
   }
   canvas {
     display: block;
+    width: 100%;
+    height: 100%;
+  }
+  #panel {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px 24px;
+    align-items: center;
+    padding: 10px 18px;
+    background: rgba(10, 12, 20, 0.85);
+    border-top: 1px solid rgba(120, 200, 255, 0.15);
+  }
+  .ctl {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 168px;
+  }
+  .ctl label {
+    font-size: 12px;
+    color: #8e99b8;
+  }
+  .ctl span {
+    font-size: 13px;
+    color: #7fd4ff;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .ctl input[type=range] {
+    width: 176px;
+    accent-color: #5d8fe8;
+  }
+  #resetBtn {
+    margin-left: auto;
+    padding: 9px 20px;
+    background: #5d8fe8;
+    border: none;
+    border-radius: 6px;
+    color: #0b0e16;
+    font-weight: 600;
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  #resetBtn:hover {
+    background: #6fa0f5;
+  }
+  #resetBtn:active {
+    transform: scale(0.97);
   }
 </style>
 </head>
 <body>
-<canvas id="pendulum"></canvas>
+<div id="stage"><canvas id="pendulum"></canvas></div>
+<div id="panel">
+  <div class="ctl">
+    <label>摆长 <span id="lenVal">200 px</span></label>
+    <input type="range" id="lenSlider" min="100" max="350" step="1" value="200">
+  </div>
+  <div class="ctl">
+    <label>重力 <span id="gVal">9.8 m/s²</span></label>
+    <input type="range" id="gSlider" min="1" max="25" step="0.1" value="9.8">
+  </div>
+  <div class="ctl">
+    <label>阻尼 <span id="dampVal">0.000</span></label>
+    <input type="range" id="dampSlider" min="0" max="0.01" step="0.001" value="0">
+  </div>
+  <button id="resetBtn" type="button">重置摆动</button>
+</div>
 <script>
 const canvas = document.getElementById('pendulum');
 const ctx = canvas.getContext('2d');
+const stage = document.getElementById('stage');
 
-const LENGTH = 200;
-const GRAVITY = 9.8;
+const lenSlider = document.getElementById('lenSlider');
+const gSlider = document.getElementById('gSlider');
+const dampSlider = document.getElementById('dampSlider');
+const lenVal = document.getElementById('lenVal');
+const gVal = document.getElementById('gVal');
+const dampVal = document.getElementById('dampVal');
+const resetBtn = document.getElementById('resetBtn');
+
 const SCALE = 100;
+const DAMPING_GAIN = 60;
 const INITIAL_ANGLE = Math.PI / 4;
+
+let W = 0;
+let H = 0;
+let LENGTH = 200;
+let GRAVITY = 9.8;
+let DAMPING = 0;
 
 let angle = INITIAL_ANGLE;
 let angularVelocity = 0;
@@ -34,20 +125,24 @@ const pivot = { x: 0, y: 0 };
 
 function resize() {
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = window.innerWidth * dpr;
-  canvas.height = window.innerHeight * dpr;
-  canvas.style.width = window.innerWidth + 'px';
-  canvas.style.height = window.innerHeight + 'px';
+  W = stage.clientWidth;
+  H = stage.clientHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
 function updatePivot() {
-  pivot.x = window.innerWidth / 2;
-  pivot.y = Math.min(170, window.innerHeight * 0.22);
+  pivot.x = W / 2;
+  pivot.y = Math.min(170, H * 0.22);
 }
 
 function step(dt) {
-  const angularAcceleration = -(GRAVITY / (LENGTH / SCALE)) * Math.sin(angle);
+  const angularAcceleration =
+    -(GRAVITY / (LENGTH / SCALE)) * Math.sin(angle) -
+    DAMPING * DAMPING_GAIN * angularVelocity;
   angularVelocity += angularAcceleration * dt;
   angle += angularVelocity * dt;
 }
@@ -56,7 +151,7 @@ function draw() {
   const bobX = pivot.x + LENGTH * Math.sin(angle);
   const bobY = pivot.y + LENGTH * Math.cos(angle);
 
-  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  ctx.clearRect(0, 0, W, H);
 
   ctx.strokeStyle = 'rgba(150, 160, 190, 0.85)';
   ctx.lineWidth = 2;
@@ -99,6 +194,26 @@ function frame(time) {
   draw();
   requestAnimationFrame(frame);
 }
+
+lenSlider.addEventListener('input', () => {
+  LENGTH = Number(lenSlider.value);
+  lenVal.textContent = LENGTH + ' px';
+});
+
+gSlider.addEventListener('input', () => {
+  GRAVITY = Number(gSlider.value);
+  gVal.textContent = GRAVITY.toFixed(1) + ' m/s²';
+});
+
+dampSlider.addEventListener('input', () => {
+  DAMPING = Number(dampSlider.value);
+  dampVal.textContent = DAMPING.toFixed(3);
+});
+
+resetBtn.addEventListener('click', () => {
+  angle = INITIAL_ANGLE;
+  angularVelocity = 0;
+});
 
 window.addEventListener('resize', resize);
 resize();
