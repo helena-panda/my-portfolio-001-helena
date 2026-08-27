@@ -5,6 +5,7 @@ rem ==================== 配置区（按需修改） ====================
 set "GH_USER=helena-panda"
 set "REPO=my-portfolio-001-helena"
 set "BRANCH=main"
+set "MAX_TRY=5"
 rem ==========================================================
 
 echo.
@@ -74,18 +75,26 @@ goto :commit_done
 echo [2/4] 没有检测到新改动，跳过提交。
 :commit_done
 
-rem ------ 5. 配置远程并推送 ------
+rem ------ 5. 配置远程并推送（失败自动重试） ------
 git remote get-url origin >nul 2>nul
 if %errorlevel%==0 goto :remote_ok
 git remote add origin https://github.com/%GH_USER%/%REPO%.git
 :remote_ok
 
 echo [3/4] 正在推送到 GitHub（网络较慢时请耐心等待）...
+set "TRY_NUM=0"
+:push_retry
+set /a TRY_NUM+=1
 git push -u origin %BRANCH%
 if not %errorlevel%==0 (
-    echo [错误] 推送失败。请检查：
-    echo        1. 网络是否可访问 GitHub
-    echo        2. 是否曾在浏览器完成过 GitHub 登录授权
+    if %TRY_NUM% LSS %MAX_TRY% (
+        echo [提示] 第 %TRY_NUM% 次推送失败，网络可能不稳定，10 秒后自动重试...
+        timeout /t 10 /nobreak >nul
+        goto :push_retry
+    )
+    echo [错误] 连续 %MAX_TRY% 次推送失败。请检查：
+    echo        1. 网络是否可访问 GitHub（或在 GitHub 登录过）
+    echo        2. 若装过代理软件（如 Clash），先开启代理再重跑脚本
     pause
     exit /b 1
 )
