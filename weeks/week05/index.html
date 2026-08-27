@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>单摆物理模拟器 · 简谐振动</title>
+<style>
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: #1a1a24;
+  }
+  canvas {
+    display: block;
+  }
+</style>
+</head>
+<body>
+<canvas id="pendulum"></canvas>
+<script>
+const canvas = document.getElementById('pendulum');
+const ctx = canvas.getContext('2d');
+
+const LENGTH = 200;
+const GRAVITY = 9.8;
+const SCALE = 100;
+const INITIAL_ANGLE = Math.PI / 4;
+
+let angle = INITIAL_ANGLE;
+let angularVelocity = 0;
+let lastTime = null;
+
+const pivot = { x: 0, y: 0 };
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function updatePivot() {
+  pivot.x = window.innerWidth / 2;
+  pivot.y = Math.min(170, window.innerHeight * 0.22);
+}
+
+function step(dt) {
+  const angularAcceleration = -(GRAVITY / (LENGTH / SCALE)) * Math.sin(angle);
+  angularVelocity += angularAcceleration * dt;
+  angle += angularVelocity * dt;
+}
+
+function draw() {
+  const bobX = pivot.x + LENGTH * Math.sin(angle);
+  const bobY = pivot.y + LENGTH * Math.cos(angle);
+
+  ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+
+  ctx.strokeStyle = 'rgba(150, 160, 190, 0.85)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(pivot.x, pivot.y);
+  ctx.lineTo(bobX, bobY);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(pivot.x, pivot.y, 5, 0, Math.PI * 2);
+  ctx.fillStyle = '#8e99b8';
+  ctx.fill();
+
+  const glow = ctx.createRadialGradient(bobX, bobY, 0, bobX, bobY, 26);
+  glow.addColorStop(0, 'rgba(120, 200, 255, 0.55)');
+  glow.addColorStop(1, 'rgba(120, 200, 255, 0)');
+  ctx.beginPath();
+  ctx.arc(bobX, bobY, 26, 0, Math.PI * 2);
+  ctx.fillStyle = glow;
+  ctx.fill();
+
+  ctx.shadowColor = 'rgba(120, 200, 255, 0.9)';
+  ctx.shadowBlur = 18;
+  ctx.beginPath();
+  ctx.arc(bobX, bobY, 12, 0, Math.PI * 2);
+  ctx.fillStyle = '#5d8fe8';
+  ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function frame(time) {
+  if (lastTime === null) {
+    lastTime = time;
+  }
+  let dt = (time - lastTime) / 1000;
+  lastTime = time;
+  dt = Math.min(dt, 0.033);
+  updatePivot();
+  step(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener('resize', resize);
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
