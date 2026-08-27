@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>未来课堂 · 花瓣标题特效</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1d1636; }
+  canvas { display: block; }
+  #hint {
+    position: fixed; left: 0; right: 0; bottom: 40px;
+    text-align: center; color: rgba(255,255,255,.55);
+    font: 300 15px/1.8 "Microsoft YaHei", "PingFang SC", sans-serif;
+    letter-spacing: 5px; pointer-events: none;
+    transition: opacity 1s ease;
+    text-shadow: 0 1px 8px rgba(0,0,0,.4);
+  }
+  #hint.hidden { opacity: 0; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="hint">轻轻拂过文字 · 聆听花瓣与风</div>
+<script>
+(() => {
+"use strict";
+
+const canvas = document.getElementById("stage");
+const ctx = canvas.getContext("2d");
+const hint = document.getElementById("hint");
+
+let W = 0, H = 0, dpr = 1;
+let textPoints = [];      // 采样出的文字像素点（相对文字区域左上角）
+let textRect = { x: 0, y: 0, w: 0, h: 0 };
+let particles = [];
+let bgPetals = [];
+let sprites = [];
+
+/* ---------- 花瓣精灵（预渲染，加速绘制） ---------- */
+function makeSprites() {
+  const palette = ["#ff9eb5", "#ffb3c6", "#ff8fa8", "#f78fb3", "#ffc2d1", "#e88fb5", "#ffd1dc"];
+  sprites = palette.map((c) => {
+    const s = document.createElement("canvas");
+    s.width = s.height = 64;
+    const g = s.getContext("2d");
+    const grad = g.createLinearGradient(8, 30, 58, 30);
+    grad.addColorStop(0, c);
+    grad.addColorStop(1, "#fff7fa");
+    g.fillStyle = grad;
+    g.beginPath();
+    g.moveTo(10, 32);
+    g.bezierCurveTo(16, 16, 34, 10, 56, 28);
+    g.bezierCurveTo(36, 40, 18, 46, 10, 32);
+    g.fill();
+    g.strokeStyle = "rgba(255,255,255,.7)";
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(14, 32);
+    g.quadraticCurveTo(34, 24, 50, 27);
+    g.stroke();
+    return s;
+  });
+}
+
+/* ---------- 文字像素采样（按字分组，便于单字打散） ---------- */
+let cellW = 0, cellH = 0;
+
+function buildText() {
+  const CHARS = ["未", "来", "课", "堂"];
+  const fs = Math.min(W / 4.6, H * 0.42);
+  cellW = fs * 1.15;
+  cellH = fs * 1.35;
+  const step = Math.max(3, Math.round(fs / 58));
+  const pts = [];
+  for (let c = 0; c < CHARS.length; c++) {
+    const off = document.createElement("canvas");
+    off.width = Math.ceil(cellW);
+    off.height = Math.ceil(cellH);
+    const g = off.getContext("2d");
+    g.font = `bold ${fs}px "KaiTi", "STKaiti", "KaiTi SC", "SimSun", serif`;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillStyle = "#fff";
+    g.fillText(CHARS[c], off.width / 2, off.height / 2);
+    const img = g.getImageData(0, 0, off.width, off.height);
+    for (let y = 0; y < off.height; y += step) {
+      for (let x = 0; x < off.width; x += step) {
+        if (img.data[(y * off.width + x) * 4 + 3] > 120) {
+          pts.push({
+            char: c,
+            tx: x + (Math.random() - 0.5) * step * 0.8,
+            ty: y + (Math.random() - 0.5) * step * 0.8
+          });
+        }
+      }
+    }
+  }
+  // 随机抽样以控制粒子总数（保证流畅）
+  const MAX = 6500;
+  if (pts.length > MAX) {
+    const sample = new Array(MAX);
+    for (let i = 0; i < MAX; i++) sample[i] = pts[(Math.random() * pts.length) | 0];
+    pts.splice(0, pts.length, ...sample);
+  }
+  // 打乱顺序，让颜色混合更自然
+  for (let i = pts.length - 1; i > 0; i--) {
+    const j = (Math.random() * (i + 1)) | 0;
+    [pts[i], pts[j]] = [pts[j], pts[i]];
+  }
+
+  textPoints = pts;
+  textRect = {
+    x: (W - cellW * 4) / 2,
+    y: (H - cellH) / 2,
+    w: cellW * 4,
+    h: cellH
+  };
+  rebuildParticles();
+}
+
+let particlesByChar = [[], [], [], []];
+
+function rebuildParticles() {
+  particlesByChar = [[], [], [], []];
+  particles = textPoints.map((p) => {
+    const o = {
+      x: Math.random() * W,          // 页面载入时从各处飞入聚拢
+      y: Math.random() * H,
+      vx: 0, vy: 0,
+      tx: textRect.x + p.char * cellW + p.tx,
+      ty: textRect.y + p.ty,
+      size: 6 + Math.random() * 9,
+      spr: (Math.random() * sprites.length) | 0,
+      baseRot: Math.random() * Math.PI * 2,
+      rot: 0,
+      vrot: 0,
+      char: p.char
+    };
+    o.rot = o.baseRot;
+    particlesByChar[p.char].push(o);
+    return o;
+  });
+}
+
+/* ---------- 背景飘落花瓣 ---------- */
+function spawnBgPetal() {
+  const s = 8 + Math.random() * 14;
+  return {
+    x: Math.random() * (W + 60) - 30,
+    y: -30 - Math.random() * 80,
+    vx: (Math.random() - 0.5) * 26,
+    vy: 18 + Math.random() * 38,
+    size: s,
+    spr: (Math.random() * sprites.length) | 0,
+    rot: Math.random() * Math.PI * 2,
+    vrot: (Math.random() - 0.5) * 2.4,
+    sway: 14 + Math.random() * 26,
+    phase: Math.random() * Math.PI * 2,
+    alpha: 0.12 + Math.random() * 0.35
+  };
+}
+
+function initBg() {
+  bgPetals = [];
+  for (let i = 0; i < 90; i++) {
+    const p = spawnBgPetal();
+    p.y = Math.random() * H;      // 初始铺满整个屏幕
+    bgPetals.push(p);
+  }
+}
+
+/* ---------- 鼠标与悬停状态 ---------- */
+let mouse = { x: -9999, y: -9999, inside: false };
+let prevActive = -1;
+
+/* 判断鼠标停在哪个字上（-1 表示不在任何字上） */
+function activeCharAt(mx, my) {
+  const pad = 16;
+  for (let c = 0; c < 4; c++) {
+    const x0 = textRect.x + c * cellW;
+    if (mx > x0 - pad && mx < x0 + cellW + pad &&
+        my > textRect.y - pad && my < textRect.y + textRect.h + pad) return c;
+  }
+  return -1;
+}
+
+/* 打散某个字的全部花瓣 */
+function scatterChar(c, mx, my) {
+  for (const p of particlesByChar[c]) {
+    const dx = p.x - mx, dy = p.y - my;
+    const d = Math.hypot(dx, dy) || 1;
+    const f = 900 + 2600 / (1 + d * 0.004) + Math.random() * 420;
+    p.vx += (dx / d) * f + (Math.random() - 0.5) * 180;
+    p.vy += (dy / d) * f - 140 + (Math.random() - 0.5) * 180;
+  }
+}
+
+/* ---------- 风声（Web Audio 合成，无需音频文件） ---------- */
+let audio = null, windGain = null;
+
+function ensureAudio() {
+  if (audio) { if (audio.state === "suspended") audio.resume(); return; }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  audio = new AC();
+  const len = audio.sampleRate * 2;
+  const buf = audio.createBuffer(1, len, audio.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+
+  const src = audio.createBufferSource();
+  src.buffer = buf; src.loop = true;
+
+  const hp = audio.createBiquadFilter();
+  hp.type = "highpass"; hp.frequency.value = 110;
+
+  const lp = audio.createBiquadFilter();
+  lp.type = "lowpass"; lp.frequency.value = 720; lp.Q.value = 0.6;
+
+  // 缓慢的 LFO 让风声忽强忽弱（一阵一阵）
+  const lfo = audio.createOscillator();
+  lfo.frequency.value = 0.12;
+  const lfoGain = audio.createGain();
+  lfoGain.gain.value = 240;
+  lfo.connect(lfoGain).connect(lp.frequency);
+  lfo.start();
+
+  windGain = audio.createGain();
+  windGain.gain.value = 0;
+  src.connect(hp).connect(lp).connect(windGain).connect(audio.destination);
+  src.start();
+}
+
+function setWind(on) {
+  if (!audio || !windGain) return;
+  const t = audio.currentTime;
+  windGain.gain.setTargetAtTime(on ? 0.18 : 0.0001, t, on ? 0.4 : 0.7);
+}
+
+/* ---------- 主循环 ---------- */
+let last = performance.now();
+
+function update(dt, t) {
+  // 鼠标当前停在哪个字上
+  const cur = mouse.inside ? activeCharAt(mouse.x, mouse.y) : -1;
+  if (cur !== prevActive) {
+    prevActive = cur;
+    if (cur !== -1) {
+      scatterChar(cur, mouse.x, mouse.y);
+      ensureAudio();
+      setWind(true);
+      hint.classList.add("hidden");
+    } else {
+      setWind(false);
+    }
+  }
+  const R = 520;   // 连续排斥半径（满屏扩散）
+
+  for (const p of particles) {
+    const loose = (p.char === prevActive);   // 只有被激活的那个字处于松弛状态
+    const k = loose ? 2.2 : 9;               // 其它字弹簧很紧，纹丝不动
+    const damp = Math.exp(-dt * (loose ? 1.3 : 2.8)); // 悬停时速度衰减更慢
+
+    // 激活字的粒子在鼠标附近持续排斥 + 旋转（被扫开四处飞扬）
+    if (loose) {
+      const dx = p.x - mouse.x, dy = p.y - mouse.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < R * R) {
+        const d = Math.sqrt(d2) || 1;
+        const f = (1 - d / R) * 3400;
+        p.vx += (dx / d) * f * dt;
+        p.vy += (dy / d) * f * dt;
+        p.vx += (-dy / d) * f * 0.5 * dt;       // 切向旋涡
+        p.vy += ( dx / d) * f * 0.5 * dt;
+      }
+      p.vx += 140 * dt;                         // 阵风微拂
+    }
+    // 弹簧拉回目标位置（静止时锁定原位）
+    p.vx += (p.tx - p.x) * k * dt;
+    p.vy += (p.ty - p.y) * k * dt;
+    p.vx *= damp; p.vy *= damp;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+
+    // 旋转：飞得快就转得快，安静时保持静止角度
+    const speed = Math.hypot(p.vx, p.vy);
+    p.vrot += (Math.min(speed * 0.012, 6) - p.vrot) * dt * 4;
+    p.rot += p.vrot * dt;
+  }
+
+  // 背景花瓣飘落
+  for (let i = 0; i < bgPetals.length; i++) {
+    const b = bgPetals[i];
+    b.vy += Math.sin(t * 0.6 + b.phase) * 6 * dt;
+    b.x += (b.vx + Math.sin(t * 0.5 + b.phase) * b.sway * 0.3) * dt;
+    b.y += b.vy * dt;
+    b.rot += b.vrot * dt;
+    if (b.y > H + 40) bgPetals[i] = spawnBgPetal();
+  }
+}
+
+function draw(t) {
+  // 背景暮色渐变
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "#211a40");
+  g.addColorStop(0.55, "#3a2b5e");
+  g.addColorStop(1, "#6d4a74");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // 标题背后的柔光晕（悬停时更亮）
+  const cx = textRect.x + textRect.w / 2;
+  const cy = textRect.y + textRect.h / 2;
+  const glowR = textRect.w * 0.72;
+  const pulse = 0.5 + 0.5 * Math.sin(t * 1.2);
+  const a = prevActive !== -1 ? 0.22 : 0.09 + pulse * 0.04;
+  const hg = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowR);
+  hg.addColorStop(0, `rgba(255,150,180,${a})`);
+  hg.addColorStop(1, "rgba(255,150,180,0)");
+  ctx.fillStyle = hg;
+  ctx.fillRect(0, 0, W, H);
+
+  // 背景花瓣（较淡）
+  for (const b of bgPetals) {
+    ctx.globalAlpha = b.alpha;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.translate(b.x, b.y);
+    ctx.rotate(b.rot);
+    ctx.drawImage(sprites[b.spr], -b.size / 2, -b.size / 2, b.size, b.size);
+  }
+  ctx.globalAlpha = 1;
+
+  // 文字花瓣
+  for (const p of particles) {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.rot);
+    ctx.drawImage(sprites[p.spr], -p.size / 2, -p.size / 2, p.size, p.size);
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function frame() {
+  const now = performance.now();
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  update(dt, now / 1000);
+  draw(now / 1000);
+  requestAnimationFrame(frame);
+}
+
+/* ---------- 初始化 ---------- */
+function resize() {
+  W = window.innerWidth;
+  H = window.innerHeight;
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + "px";
+  canvas.style.height = H + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  buildText();
+  initBg();
+}
+
+window.addEventListener("pointermove", (e) => {
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+  mouse.inside = true;
+});
+window.addEventListener("pointerleave", () => {
+  mouse.inside = false;
+  if (prevActive !== -1) { prevActive = -1; setWind(false); }
+});
+document.addEventListener("mouseleave", () => {
+  mouse.inside = false;
+  if (prevActive !== -1) { prevActive = -1; setWind(false); }
+});
+window.addEventListener("blur", () => {
+  if (prevActive !== -1) { prevActive = -1; setWind(false); }
+});
+window.addEventListener("resize", resize);
+
+makeSprites();
+resize();
+requestAnimationFrame(frame);
+document.fonts && document.fonts.ready.then(buildText);
+})();
+</script>
+</body>
+</html>

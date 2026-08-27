@@ -1,0 +1,22 @@
+# 嵌套 git 仓库（课程资料仓库在根目录下独立管理，不纳入本作品集）
+human-ai-collaboration/
+
+# Office / WPS 临时锁文件
+~$*
+*.tmp
+
+# 日志与缓存
+*.log
+*.cache
+
+# Windows / macOS 系统垃圾文件
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# 常见开发工具目录
+.vscode/
+.idea/
+node_modules/
+__pycache__/
+*.pyc

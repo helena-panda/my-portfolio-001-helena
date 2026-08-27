@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>番茄钟</title>
+<link rel="icon" href="data:,">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #dcefdc; font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #2f4f3f; overflow: hidden;
+  }
+  .wrap { text-align: center; user-select: none; }
+  .ring {
+    width: 320px; height: 320px; border-radius: 50%; margin: 0 auto 56px;
+    background: conic-gradient(#e07b54 calc(var(--p, 0) * 1%), rgba(255,255,255,.55) 0);
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 12px 40px rgba(46,93,67,.18);
+    transition: background .2s linear;
+  }
+  .ring.finished { animation: flash .6s ease 3; }
+  @keyframes flash { 50% { box-shadow: 0 0 100px rgba(224,123,84,.75); } }
+  .ring-in {
+    width: 292px; height: 292px; border-radius: 50%;
+    background: #eef7ee; display: flex; align-items: center; justify-content: center;
+    box-shadow: inset 0 2px 12px rgba(46,93,67,.08);
+  }
+  #time {
+    font-size: 112px; font-weight: 300; letter-spacing: 6px; font-variant-numeric: tabular-nums;
+    color: #2f4f3f; text-shadow: 0 2px 10px rgba(46,93,67,.12);
+  }
+  .btns { display: flex; gap: 24px; justify-content: center; }
+  .stepper { display: flex; align-items: center; justify-content: center; gap: 16px; margin-bottom: 26px; }
+  .stepper button {
+    min-width: 52px; padding: 8px 0; font-size: 16px; letter-spacing: 0;
+    border-radius: 999px; background: rgba(255,255,255,.5);
+    box-shadow: 0 2px 8px rgba(46,93,67,.1);
+  }
+  .stepper span { font-size: 15px; letter-spacing: 2px; color: #45735c; font-variant-numeric: tabular-nums; cursor: pointer; border-bottom: 1px dashed #45735c; }
+  .stepper span:hover { color: #2f4f3f; }
+  .stepper input {
+    width: 84px; padding: 6px 8px; text-align: center; font-size: 16px;
+    border: 1px solid rgba(46,93,67,.35); border-radius: 10px; outline: none;
+    background: rgba(255,255,255,.8); color: #2f4f3f; font-variant-numeric: tabular-nums;
+  }
+  .stepper input:focus { border-color: #3e8e5a; box-shadow: 0 0 0 3px rgba(62,142,90,.15); }
+  .stepper input[hidden] { display: none !important; }
+  button {
+    min-width: 130px; padding: 14px 30px; font-size: 18px; letter-spacing: 8px;
+    border: none; border-radius: 999px; cursor: pointer;
+    background: rgba(255,255,255,.7); color: #2f4f3f;
+    box-shadow: 0 4px 14px rgba(46,93,67,.14);
+    transition: background .25s, color .25s, transform .15s, box-shadow .25s;
+  }
+  button:hover { background: #3e8e5a; color: #fff; box-shadow: 0 6px 20px rgba(62,142,90,.4); }
+  button:active { transform: scale(.96); }
+  button:disabled { opacity: .45; cursor: default; box-shadow: none; }
+  button:disabled:hover { background: rgba(255,255,255,.7); color: #2f4f3f; }
+  #done { margin-top: 30px; font-size: 15px; letter-spacing: 3px; color: #e07b54; opacity: 0; transition: opacity .4s; }
+  #done.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="ring" id="ring">
+    <div class="ring-in"><div id="time">25:00</div></div>
+  </div>
+  <div class="stepper">
+    <button id="minus">−1</button>
+    <span id="mins">25 分钟</span>
+    <input id="minsInput" type="number" min="1" max="999" value="25" hidden>
+    <button id="plus">+1</button>
+  </div>
+  <div class="btns">
+    <button id="start">开始</button>
+    <button id="pause">暂停</button>
+  </div>
+  <div id="done">时间到,休息一下吧</div>
+</div>
+<script>
+(() => {
+  'use strict';
+  const MIN_MINS = 1, MAX_MINS = 999, STEP = 1;
+  let totalMins = 25;
+  let remaining = totalMins * 60;
+  let running = false;
+  let endTime = 0;
+  let timerId = null;
+  let ac = null;
+
+  const timeEl = document.getElementById('time');
+  const ring = document.getElementById('ring');
+  const startBtn = document.getElementById('start');
+  const pauseBtn = document.getElementById('pause');
+  const doneEl = document.getElementById('done');
+  const minsEl = document.getElementById('mins');
+  const minsInput = document.getElementById('minsInput');
+  const minusBtn = document.getElementById('minus');
+  const plusBtn = document.getElementById('plus');
+
+  function render() {
+    const m = Math.floor(remaining / 60);
+    const s = remaining % 60;
+    timeEl.textContent = String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+    ring.style.setProperty('--p', ((totalMins * 60 - remaining) / (totalMins * 60) * 100).toFixed(2));
+  }
+
+  function setTotal(mins) {
+    totalMins = Math.max(MIN_MINS, Math.min(MAX_MINS, mins));
+    minsEl.textContent = totalMins + ' 分钟';
+    remaining = totalMins * 60;
+    ring.classList.remove('finished');
+    doneEl.classList.remove('show');
+    render();
+  }
+
+  function updateStepper() {
+    minusBtn.disabled = running || totalMins <= MIN_MINS;
+    plusBtn.disabled = running || totalMins >= MAX_MINS;
+  }
+
+  function openEditor() {
+    if (running) return;
+    minsInput.value = totalMins;
+    minsInput.hidden = false;
+    minsEl.style.display = 'none';
+    minsInput.focus();
+    minsInput.select();
+  }
+
+  function commitEditor() {
+    const v = parseInt(minsInput.value, 10);
+    if (!isNaN(v)) setTotal(v);
+    minsInput.hidden = true;
+    minsEl.style.display = '';
+    updateStepper();
+  }
+
+  function beep(times) {
+    if (!ac) return;
+    for (let i = 0; i < times; i++) {
+      const t = ac.currentTime + i * 0.7;
+      const o = ac.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = 880;
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.3, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+      o.connect(g);
+      g.connect(ac.destination);
+      o.start(t);
+      o.stop(t + 0.55);
+    }
+  }
+
+  function finish() {
+    stopTimer();
+    ring.classList.add('finished');
+    doneEl.classList.add('show');
+    beep(3);
+  }
+
+  function tick() {
+    remaining = Math.max(0, Math.round((endTime - Date.now()) / 1000));
+    render();
+    if (remaining <= 0) finish();
+  }
+
+  function stopTimer() {
+    if (timerId) {
+      clearInterval(timerId);
+      timerId = null;
+    }
+    running = false;
+  }
+
+  function start() {
+    if (remaining <= 0) {
+      remaining = totalMins * 60;
+      ring.classList.remove('finished');
+      doneEl.classList.remove('show');
+    }
+    if (running) return;
+    if (!ac) {
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    ac.resume();
+    running = true;
+    endTime = Date.now() + remaining * 1000;
+    timerId = setInterval(tick, 200);
+    updateStepper();
+    render();
+  }
+
+  function pause() {
+    if (!running) return;
+    remaining = Math.max(0, Math.round((endTime - Date.now()) / 1000));
+    stopTimer();
+    updateStepper();
+    render();
+  }
+
+  startBtn.addEventListener('click', start);
+  pauseBtn.addEventListener('click', pause);
+  minusBtn.addEventListener('click', () => { setTotal(totalMins - STEP); updateStepper(); });
+  plusBtn.addEventListener('click', () => { setTotal(totalMins + STEP); updateStepper(); });
+  minsEl.addEventListener('click', openEditor);
+  minsInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { commitEditor(); minsInput.blur(); }
+    if (e.key === 'Escape') { minsInput.hidden = true; minsEl.style.display = ''; updateStepper(); }
+  });
+  minsInput.addEventListener('blur', commitEditor);
+  updateStepper();
+  render();
+})();
+</script>
+</body>
+</html>
